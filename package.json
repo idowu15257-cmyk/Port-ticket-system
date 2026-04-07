@@ -1,0 +1,24 @@
+{
+  "name": "ticket-master-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "APK wrapper for Ticket Master",
+  "scripts": {
+    "cap:sync": "npx cap sync android",
+    "cap:copy": "npx cap copy android",
+    "cap:open": "npx cap open android",
+    "android:clean": "cd android && gradlew.bat clean",
+    "apk:debug": "cd android && gradlew.bat assembleDebug",
+    "apk:release": "cd android && gradlew.bat assembleRelease",
+    "apk:release:signed": "cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.1",
+    "@capacitor/camera": "^7.0.1",
+    "@capacitor/core": "^7.0.1",
+    "@capacitor/push-notifications": "^7.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.1"
+  }
+}
