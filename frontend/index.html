@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Port Terminal Ticket System</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="status-banner" class="status-banner hidden" role="status" aria-live="polite"></div>
+  <div id="app"></div>
+
+  <!-- Auth Pages -->
+  <div id="login-page" class="page hidden">
+    <form id="login-form" class="auth-form">
+      <h1>Port Terminal Ticket System</h1>
+      <input type="email" id="email" placeholder="Email" required>
+      <input type="password" id="password" placeholder="Password" required>
+      <button type="submit">Login</button>
+      <p>Don't have an account? <a href="#" onclick="showRegister()">Sign up</a></p>
+      <details class="api-config-panel">
+        <summary>Set Server URL</summary>
+        <label for="api-url-input">Backend API URL</label>
+        <input type="url" id="api-url-input" placeholder="https://your-api-domain.com/api">
+        <button type="button" id="save-api-url-btn" class="btn-secondary">Save URL</button>
+        <small id="api-url-current"></small>
+      </details>
+    </form>
+  </div>
+
+  <div id="register-page" class="page hidden">
+    <form id="register-form" class="auth-form">
+      <h1>Create Account</h1>
+      <input type="email" id="reg-email" placeholder="Email" required>
+      <input type="password" id="reg-password" placeholder="Password" required>
+      <input type="text" id="full-name" placeholder="Full Name" required>
+      <select id="role">
+        <option value="operator">Operator</option>
+        <option value="technician">Technician</option>
+      </select>
+      <button type="submit">Sign Up</button>
+      <p>Already have an account? <a href="#" onclick="showLogin()">Login</a></p>
+    </form>
+  </div>
+
+  <!-- Main App -->
+  <nav class="navbar hidden" id="navbar">
+    <div class="nav-container">
+      <h2>🎫 Ticket System</h2>
+      <div class="nav-links">
+        <button onclick="showDashboard()">Dashboard</button>
+        <button onclick="showTickets()">Tickets</button>
+        <button onclick="showCreateTicket()">+ New Ticket</button>
+        <button onclick="logout()">Logout</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Dashboard -->
+  <div id="dashboard-page" class="page hidden">
+    <main class="dashboard">
+      <h1>Dashboard</h1>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <h3>Total Tickets</h3>
+          <p class="stat-number" id="total-tickets">0</p>
+        </div>
+        <div class="stat-card">
+          <h3>Open Tickets</h3>
+          <p class="stat-number open" id="open-tickets">0</p>
+        </div>
+        <div class="stat-card">
+          <h3>Resolved Tickets</h3>
+          <p class="stat-number resolved" id="resolved-tickets">0</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Tickets List -->
+  <div id="tickets-page" class="page hidden">
+    <main class="tickets-container">
+      <div class="tickets-header">
+        <h1>Tickets</h1>
+        <div class="filters">
+          <select id="status-filter" onchange="applyFilters()">
+            <option value="">All Statuses</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+          <input type="date" id="start-date" placeholder="Start Date" onchange="applyFilters()">
+          <input type="date" id="end-date" placeholder="End Date" onchange="applyFilters()">
+          <button onclick="exportCSV()" class="btn-primary">📥 Export CSV</button>
+        </div>
+      </div>
+      <div id="tickets-list" class="tickets-grid"></div>
+    </main>
+  </div>
+
+  <!-- Create Ticket -->
+  <div id="create-ticket-page" class="page hidden">
+    <main class="form-container">
+      <h1>Create New Ticket</h1>
+      <form id="create-ticket-form">
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="ticket-title" required>
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <textarea id="ticket-description" rows="5" required></textarea>
+        </div>
+        <div class="form-group">
+          <label>Equipment Name</label>
+          <input type="text" id="equipment-name">
+        </div>
+        <div class="form-group">
+          <label>Location</label>
+          <input type="text" id="location">
+        </div>
+        <div class="form-group">
+          <label>Priority</label>
+          <select id="priority">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Attach Files (Optional)</label>
+          <input type="file" id="ticket-files" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.txt,.xls,.xlsx">
+          <button type="button" class="btn-secondary btn-camera" onclick="captureForInput('ticket-files')">Use Camera</button>
+          <small>Max 5 files, 50MB each. Allowed: PDF, images, Office, text files</small>
+        </div>
+        <button type="submit" class="btn-primary">Create Ticket</button>
+        <button type="button" onclick="showTickets()" class="btn-secondary">Cancel</button>
+      </form>
+    </main>
+  </div>
+
+  <!-- Ticket Detail -->
+  <div id="ticket-detail-page" class="page hidden">
+    <main class="ticket-detail-container">
+      <button onclick="showTickets()" class="btn-secondary">← Back</button>
+      <div class="ticket-header">
+        <h1 id="detail-title"></h1>
+        <div class="ticket-meta">
+          <span id="detail-ticket-number"></span>
+          <span id="detail-status"></span>
+          <span id="detail-priority"></span>
+        </div>
+      </div>
+
+      <div class="ticket-content">
+        <section class="ticket-info">
+          <h3>Information</h3>
+          <p><strong>Equipment:</strong> <span id="detail-equipment"></span></p>
+          <p><strong>Location:</strong> <span id="detail-location"></span></p>
+          <p><strong>Created:</strong> <span id="detail-created"></span></p>
+          <p><strong>Assigned To:</strong> <span id="detail-assigned"></span></p>
+        </section>
+
+        <section class="ticket-actions">
+          <h3>Update Status</h3>
+          <select id="status-update">
+            <option value="open">Open</option>
+            <option value="in_progress">In Progress</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+          <button onclick="updateStatus()" class="btn-primary">Update</button>
+        </section>
+
+        <section class="ticket-files">
+          <h3>Attachments</h3>
+          <div id="files-list"></div>
+        </section>
+
+        <section class="ticket-comments">
+          <h3>Responses</h3>
+          <div id="comments-list"></div>
+          <form id="add-comment-form" onsubmit="addComment(event)">
+            <textarea id="comment-text" placeholder="Add a response..." required></textarea>
+            <div class="form-group">
+              <label>Attach Files (Optional)</label>
+              <input type="file" id="comment-files" multiple accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.txt,.xls,.xlsx">
+              <button type="button" class="btn-secondary btn-camera" onclick="captureForInput('comment-files')">Use Camera</button>
+              <small>Max 5 files, 50MB each</small>
+            </div>
+            <button type="submit" class="btn-primary">Post Response</button>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="config.js"></script>
+  <script src="mobile.js"></script>
+  <script src="api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
