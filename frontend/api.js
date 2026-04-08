@@ -23,6 +23,15 @@ class TicketAPI {
     return response.json();
   }
 
+  static async setupPassword(email, setupToken, newPassword) {
+    const response = await fetch(`${API_BASE_URL}/auth/setup-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, setupToken, newPassword })
+    });
+    return response.json();
+  }
+
   static async login(email, password) {
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
@@ -131,6 +140,39 @@ class TicketAPI {
   static async deleteFile(fileId) {
     const response = await fetch(`${API_BASE_URL}/files/${fileId}`, {
       method: 'DELETE',
+      headers: this.getAuthHeader()
+    });
+    return response.json();
+  }
+
+  static async createManagedUser(email, fullName, role) {
+    const response = await fetch(`${API_BASE_URL}/admin/users`, {
+      method: 'POST',
+      headers: this.getAuthHeader(),
+      body: JSON.stringify({ email, fullName, role })
+    });
+    return response.json();
+  }
+
+  static async getManagedUsers() {
+    const response = await fetch(`${API_BASE_URL}/admin/users`, {
+      headers: this.getAuthHeader()
+    });
+    return response.json();
+  }
+
+  static async updateManagedUser(userId, updates) {
+    const response = await fetch(`${API_BASE_URL}/admin/users/${userId}`, {
+      method: 'PATCH',
+      headers: this.getAuthHeader(),
+      body: JSON.stringify(updates)
+    });
+    return response.json();
+  }
+
+  static async resetManagedUserPassword(userId) {
+    const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/reset-password`, {
+      method: 'POST',
       headers: this.getAuthHeader()
     });
     return response.json();

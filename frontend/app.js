@@ -1,7 +1,63 @@
 let currentUser = null;
 let currentTicketId = null;
+let managedUsersCache = [];
 
 let statusBannerTimeout = null;
+
+function isTechnician() {
+  return currentUser?.role === 'technician';
+}
+
+function isOperator() {
+  return currentUser?.role === 'operator';
+}
+
+function isAdmin() {
+  return currentUser?.role === 'admin';
+}
+
+function configureRoleUi() {
+  const navTitle = document.getElementById('nav-title');
+  const dashboardBtn = document.getElementById('nav-dashboard-btn');
+  const ticketsBtn = document.getElementById('nav-tickets-btn');
+  const createBtn = document.getElementById('nav-create-btn');
+  const createTitle = document.getElementById('create-ticket-title');
+
+  if (!currentUser) return;
+
+  if (isAdmin()) {
+    if (navTitle) navTitle.textContent = 'Universal Admin Console';
+    if (dashboardBtn) {
+      dashboardBtn.classList.remove('hidden');
+      dashboardBtn.textContent = 'User Admin';
+    }
+    if (ticketsBtn) ticketsBtn.classList.add('hidden');
+    if (createBtn) createBtn.classList.add('hidden');
+    if (createTitle) createTitle.textContent = 'Submit Complaint';
+    return;
+  }
+
+  if (isTechnician()) {
+    if (navTitle) navTitle.textContent = 'Technician Admin Panel';
+    if (dashboardBtn) {
+      dashboardBtn.classList.remove('hidden');
+      dashboardBtn.textContent = 'Dashboard';
+    }
+    if (ticketsBtn) ticketsBtn.classList.remove('hidden');
+    if (createBtn) createBtn.classList.add('hidden');
+    if (createTitle) createTitle.textContent = 'Submit Complaint';
+    return;
+  }
+
+  if (navTitle) navTitle.textContent = 'Operator Complaint Desk';
+  if (dashboardBtn) {
+    dashboardBtn.classList.add('hidden');
+    dashboardBtn.textContent = 'Dashboard';
+  }
+  if (ticketsBtn) ticketsBtn.classList.add('hidden');
+  if (createBtn) createBtn.classList.remove('hidden');
+  if (createTitle) createTitle.textContent = 'Submit Complaint';
+}
 
 function showStatusBanner(message, type = 'info', autoHideMs = 5000) {
   const banner = document.getElementById('status-banner');
@@ -76,6 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (savedUser) {
     currentUser = JSON.parse(savedUser);
     TicketAPI.setToken(localStorage.getItem('token'));
+    configureRoleUi();
     showDashboard();
   } else {
     showLogin();
@@ -86,8 +143,10 @@ document.addEventListener('DOMContentLoaded', () => {
 function showLogin() {
   document.getElementById('login-page').classList.remove('hidden');
   document.getElementById('register-page').classList.add('hidden');
+  document.getElementById('setup-password-page').classList.add('hidden');
   document.getElementById('navbar').classList.add('hidden');
   document.getElementById('dashboard-page').classList.add('hidden');
+  document.getElementById('admin-page').classList.add('hidden');
   document.getElementById('tickets-page').classList.add('hidden');
   document.getElementById('create-ticket-page').classList.add('hidden');
   document.getElementById('ticket-detail-page').classList.add('hidden');
@@ -98,11 +157,29 @@ function showLogin() {
 function showRegister() {
   document.getElementById('login-page').classList.add('hidden');
   document.getElementById('register-page').classList.remove('hidden');
+  document.getElementById('setup-password-page').classList.add('hidden');
   document.getElementById('navbar').classList.add('hidden');
   document.getElementById('dashboard-page').classList.add('hidden');
+  document.getElementById('admin-page').classList.add('hidden');
   document.getElementById('tickets-page').classList.add('hidden');
+  document.getElementById('create-ticket-page').classList.add('hidden');
+  document.getElementById('ticket-detail-page').classList.add('hidden');
 
   document.getElementById('register-form').onsubmit = handleRegister;
+}
+
+function showSetupPassword() {
+  document.getElementById('login-page').classList.add('hidden');
+  document.getElementById('register-page').classList.add('hidden');
+  document.getElementById('setup-password-page').classList.remove('hidden');
+  document.getElementById('navbar').classList.add('hidden');
+  document.getElementById('dashboard-page').classList.add('hidden');
+  document.getElementById('admin-page').classList.add('hidden');
+  document.getElementById('tickets-page').classList.add('hidden');
+  document.getElementById('create-ticket-page').classList.add('hidden');
+  document.getElementById('ticket-detail-page').classList.add('hidden');
+
+  document.getElementById('setup-password-form').onsubmit = handleSetupPassword;
 }
 
 async function handleLogin(e) {
@@ -121,6 +198,7 @@ async function handleLogin(e) {
     TicketAPI.setToken(result.token);
     localStorage.setItem('user', JSON.stringify(result.user));
 
+    configureRoleUi();
     showDashboard();
     showStatusBanner('Login successful.', 'success', 3500);
   } catch (err) {
@@ -133,7 +211,7 @@ async function handleRegister(e) {
   const email = document.getElementById('reg-email').value;
   const password = document.getElementById('reg-password').value;
   const fullName = document.getElementById('full-name').value;
-  const role = document.getElementById('role').value;
+  const role = 'operator';
 
   try {
     const result = await TicketAPI.register(email, password, fullName, role);
@@ -146,10 +224,38 @@ async function handleRegister(e) {
     TicketAPI.setToken(result.token);
     localStorage.setItem('user', JSON.stringify(result.user));
 
+    configureRoleUi();
     showDashboard();
     showStatusBanner('Registration successful.', 'success', 3500);
   } catch (err) {
     handleNetworkError('Registration failed', err);
+  }
+}
+
+async function handleSetupPassword(e) {
+  e.preventDefault();
+
+  const email = document.getElementById('setup-email').value;
+  const setupToken = document.getElementById('setup-token').value;
+  const newPassword = document.getElementById('setup-new-password').value;
+  const confirmPassword = document.getElementById('setup-confirm-password').value;
+
+  if (newPassword !== confirmPassword) {
+    showStatusBanner('Passwords do not match.', 'error', 5000);
+    return;
+  }
+
+  try {
+    const result = await TicketAPI.setupPassword(email, setupToken, newPassword);
+    if (result.error) {
+      showStatusBanner(result.error, 'error', 7000);
+      return;
+    }
+
+    showStatusBanner('Password setup successful. Please login.', 'success', 4500);
+    showLogin();
+  } catch (err) {
+    handleNetworkError('Password setup failed', err);
   }
 }
 
@@ -164,8 +270,10 @@ function logout() {
 function showPage(pageId) {
   document.getElementById('login-page').classList.add('hidden');
   document.getElementById('register-page').classList.add('hidden');
+  document.getElementById('setup-password-page').classList.add('hidden');
   document.getElementById('navbar').classList.remove('hidden');
   document.getElementById('dashboard-page').classList.add('hidden');
+  document.getElementById('admin-page').classList.add('hidden');
   document.getElementById('tickets-page').classList.add('hidden');
   document.getElementById('create-ticket-page').classList.add('hidden');
   document.getElementById('ticket-detail-page').classList.add('hidden');
@@ -174,44 +282,199 @@ function showPage(pageId) {
 }
 
 function showDashboard() {
+  if (isAdmin()) {
+    showAdminPanel();
+    return;
+  }
+
+  if (isOperator()) {
+    showCreateTicket();
+    return;
+  }
+
   showPage('dashboard-page');
   loadDashboardStats();
+  loadTickets('tickets-list');
 }
 
 function showTickets() {
+  if (isAdmin()) {
+    showAdminPanel();
+    return;
+  }
+
+  if (isOperator()) {
+    showCreateTicket();
+    return;
+  }
+
   showPage('tickets-page');
-  loadTickets();
+  loadTickets('tickets-list-secondary');
 }
 
 function showCreateTicket() {
+  if (isAdmin()) {
+    showAdminPanel();
+    return;
+  }
+
   showPage('create-ticket-page');
   document.getElementById('create-ticket-form').onsubmit = handleCreateTicket;
 }
 
+function showAdminPanel() {
+  showPage('admin-page');
+  document.getElementById('admin-create-user-form').onsubmit = handleAdminCreateUser;
+  loadManagedUsers();
+}
+
+async function handleAdminCreateUser(e) {
+  e.preventDefault();
+
+  const fullName = document.getElementById('admin-user-full-name').value;
+  const email = document.getElementById('admin-user-email').value;
+  const role = document.getElementById('admin-user-role').value;
+
+  try {
+    const result = await TicketAPI.createManagedUser(email, fullName, role);
+    if (result.error) {
+      showStatusBanner(result.error, 'error', 7000);
+      return;
+    }
+
+    document.getElementById('admin-create-user-form').reset();
+    document.getElementById('admin-setup-token').value = result.setupToken || '';
+    showStatusBanner(`${role} account created. Share setup token securely.`, 'success', 5000);
+    loadManagedUsers();
+  } catch (err) {
+    handleNetworkError('User creation failed', err);
+  }
+}
+
+async function loadManagedUsers() {
+  try {
+    const users = await TicketAPI.getManagedUsers();
+    if (users?.error) {
+      showStatusBanner(users.error, 'error', 7000);
+      return;
+    }
+
+    managedUsersCache = Array.isArray(users) ? users : [];
+    renderManagedUsers(managedUsersCache);
+  } catch (err) {
+    handleNetworkError('Failed to load users', err);
+  }
+}
+
+function renderManagedUsers(users) {
+  const container = document.getElementById('admin-users-list');
+  if (!container) return;
+
+  if (!users.length) {
+    container.innerHTML = '<p>No managed users yet.</p>';
+    return;
+  }
+
+  container.innerHTML = users.map((user) => `
+    <div class="ticket-card" style="margin-bottom: 0.85rem;">
+      <div style="display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; align-items:center;">
+        <div>
+          <div class="ticket-number">${user.email}</div>
+          <h3 style="margin: 0.2rem 0;">${user.full_name}</h3>
+          <p style="margin:0;">Role: ${user.role} | Status: ${user.status}</p>
+        </div>
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <select id="role-select-${user.id}">
+            <option value="operator" ${user.role === 'operator' ? 'selected' : ''}>Operator</option>
+            <option value="technician" ${user.role === 'technician' ? 'selected' : ''}>Technician</option>
+          </select>
+          <button class="btn-secondary" onclick="updateManagedUserRole('${user.id}')">Save Role</button>
+          <button class="btn-secondary" onclick="toggleManagedUserStatus('${user.id}', '${user.status}')">${user.status === 'inactive' ? 'Activate' : 'Deactivate'}</button>
+          <button class="btn-primary" onclick="resetManagedUserPassword('${user.id}')">Reset Password</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function updateManagedUserRole(userId) {
+  const select = document.getElementById(`role-select-${userId}`);
+  if (!select) return;
+
+  try {
+    const result = await TicketAPI.updateManagedUser(userId, { role: select.value });
+    if (result?.error) {
+      showStatusBanner(result.error, 'error', 7000);
+      return;
+    }
+
+    showStatusBanner('User role updated.', 'success', 3500);
+    loadManagedUsers();
+  } catch (err) {
+    handleNetworkError('Role update failed', err);
+  }
+}
+
+async function toggleManagedUserStatus(userId, currentStatus) {
+  const nextStatus = currentStatus === 'inactive' ? 'active' : 'inactive';
+
+  try {
+    const result = await TicketAPI.updateManagedUser(userId, { status: nextStatus });
+    if (result?.error) {
+      showStatusBanner(result.error, 'error', 7000);
+      return;
+    }
+
+    showStatusBanner(`User ${nextStatus === 'active' ? 'activated' : 'deactivated'}.`, 'success', 3500);
+    loadManagedUsers();
+  } catch (err) {
+    handleNetworkError('Status update failed', err);
+  }
+}
+
+async function resetManagedUserPassword(userId) {
+  try {
+    const result = await TicketAPI.resetManagedUserPassword(userId);
+    if (result?.error) {
+      showStatusBanner(result.error, 'error', 7000);
+      return;
+    }
+
+    document.getElementById('admin-setup-token').value = result.setupToken || '';
+    showStatusBanner('Password reset token generated. Share securely.', 'success', 5000);
+    loadManagedUsers();
+  } catch (err) {
+    handleNetworkError('Password reset failed', err);
+  }
+}
+
 // Dashboard
 async function loadDashboardStats() {
+  if (isOperator()) return;
+
   try {
     const stats = await TicketAPI.getStats();
     document.getElementById('total-tickets').textContent = stats.total;
     document.getElementById('open-tickets').textContent = stats.open;
-    document.getElementById('resolved-tickets').textContent = stats.resolved;
+    document.getElementById('closed-tickets').textContent = stats.closed;
   } catch (err) {
     console.error('Failed to load stats:', err);
   }
 }
 
 // Tickets
-async function loadTickets() {
+async function loadTickets(listId = 'tickets-list') {
   try {
     const tickets = await TicketAPI.getTickets();
-    renderTickets(tickets);
+    renderTickets(tickets, listId);
   } catch (err) {
     handleNetworkError('Failed to load tickets', err);
   }
 }
 
-function renderTickets(tickets) {
-  const list = document.getElementById('tickets-list');
+function renderTickets(tickets, listId = 'tickets-list') {
+  const list = document.getElementById(listId);
+  if (!list) return;
   list.innerHTML = '';
 
   if (tickets?.error) {
@@ -246,13 +509,43 @@ function renderTickets(tickets) {
 }
 
 async function applyFilters() {
+  if (isOperator()) return;
+
   try {
     const status = document.getElementById('status-filter').value;
     const startDate = document.getElementById('start-date').value;
     const endDate = document.getElementById('end-date').value;
 
     const tickets = await TicketAPI.getTickets(status, startDate, endDate);
-    renderTickets(tickets);
+    renderTickets(tickets, 'tickets-list');
+    const statusSecondary = document.getElementById('status-filter-secondary');
+    const startSecondary = document.getElementById('start-date-secondary');
+    const endSecondary = document.getElementById('end-date-secondary');
+    if (statusSecondary) statusSecondary.value = status;
+    if (startSecondary) startSecondary.value = startDate;
+    if (endSecondary) endSecondary.value = endDate;
+  } catch (err) {
+    handleNetworkError('Filter failed', err);
+  }
+}
+
+async function applyFiltersFromTicketsPage() {
+  if (isOperator()) return;
+
+  try {
+    const status = document.getElementById('status-filter-secondary').value;
+    const startDate = document.getElementById('start-date-secondary').value;
+    const endDate = document.getElementById('end-date-secondary').value;
+
+    const tickets = await TicketAPI.getTickets(status, startDate, endDate);
+    renderTickets(tickets, 'tickets-list-secondary');
+
+    const statusPrimary = document.getElementById('status-filter');
+    const startPrimary = document.getElementById('start-date');
+    const endPrimary = document.getElementById('end-date');
+    if (statusPrimary) statusPrimary.value = status;
+    if (startPrimary) startPrimary.value = startDate;
+    if (endPrimary) endPrimary.value = endDate;
   } catch (err) {
     handleNetworkError('Filter failed', err);
   }
@@ -260,15 +553,22 @@ async function applyFilters() {
 
 async function exportCSV() {
   try {
-    const status = document.getElementById('status-filter').value;
-    const startDate = document.getElementById('start-date').value;
-    const endDate = document.getElementById('end-date').value;
+    const isTicketQueuePage = !document.getElementById('tickets-page').classList.contains('hidden');
+    const status = isTicketQueuePage
+      ? document.getElementById('status-filter-secondary')?.value || ''
+      : document.getElementById('status-filter')?.value || '';
+    const startDate = isTicketQueuePage
+      ? document.getElementById('start-date-secondary')?.value || ''
+      : document.getElementById('start-date')?.value || '';
+    const endDate = isTicketQueuePage
+      ? document.getElementById('end-date-secondary')?.value || ''
+      : document.getElementById('end-date')?.value || '';
 
     const blob = await TicketAPI.exportCSV(status, startDate, endDate);
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `tickets-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `complaints-report-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
     window.URL.revokeObjectURL(url);
@@ -313,9 +613,13 @@ async function handleCreateTicket(e) {
       }
     }
 
-    showStatusBanner('Ticket created successfully.', 'success', 3500);
+    showStatusBanner('Complaint submitted successfully.', 'success', 3500);
     document.getElementById('create-ticket-form').reset();
-    showTickets();
+    if (isOperator()) {
+      showCreateTicket();
+    } else {
+      showDashboard();
+    }
   } catch (err) {
     handleNetworkError('Failed to create ticket', err);
   }
@@ -323,6 +627,16 @@ async function handleCreateTicket(e) {
 
 // Ticket Detail
 async function showTicketDetail(ticketId) {
+  if (!isTechnician()) {
+    showStatusBanner('Only technicians can view complaint details.', 'info', 4500);
+    if (isAdmin()) {
+      showAdminPanel();
+    } else {
+      showCreateTicket();
+    }
+    return;
+  }
+
   currentTicketId = ticketId;
   showPage('ticket-detail-page');
   try {
@@ -346,6 +660,11 @@ function renderTicketDetail(ticket) {
     ticket.assigned_to?.full_name || 'Unassigned';
 
   document.getElementById('status-update').value = ticket.status;
+
+  const ticketActions = document.querySelector('.ticket-actions');
+  if (ticketActions) {
+    ticketActions.classList.toggle('hidden', !isTechnician());
+  }
 
   // Render comments
   const commentsList = document.getElementById('comments-list');
@@ -411,6 +730,11 @@ async function deleteFile(fileId) {
 }
 
 async function updateStatus() {
+  if (!isTechnician()) {
+    showStatusBanner('Only technicians can update complaint status.', 'error', 4500);
+    return;
+  }
+
   const newStatus = document.getElementById('status-update').value;
 
   try {
@@ -428,6 +752,11 @@ async function updateStatus() {
 }
 
 async function addComment(e) {
+  if (!isTechnician()) {
+    showStatusBanner('Only technicians can reply to complaints.', 'error', 4500);
+    return;
+  }
+
   e.preventDefault();
 
   const commentText = document.getElementById('comment-text').value;

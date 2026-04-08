@@ -18,6 +18,7 @@
       <input type="password" id="password" placeholder="Password" required>
       <button type="submit">Login</button>
       <p>Don't have an account? <a href="#" onclick="showRegister()">Sign up</a></p>
+      <p>First-time technician setup? <a href="#" onclick="showSetupPassword()">Set password</a></p>
       <details class="api-config-panel">
         <summary>Set Server URL</summary>
         <label for="api-url-input">Backend API URL</label>
@@ -31,26 +32,36 @@
   <div id="register-page" class="page hidden">
     <form id="register-form" class="auth-form">
       <h1>Create Account</h1>
+      <p style="margin-bottom: 1rem; color: #64748b;">Operator sign-up only</p>
       <input type="email" id="reg-email" placeholder="Email" required>
       <input type="password" id="reg-password" placeholder="Password" required>
       <input type="text" id="full-name" placeholder="Full Name" required>
-      <select id="role">
-        <option value="operator">Operator</option>
-        <option value="technician">Technician</option>
-      </select>
+      <input type="hidden" id="role" value="operator">
       <button type="submit">Sign Up</button>
       <p>Already have an account? <a href="#" onclick="showLogin()">Login</a></p>
+    </form>
+  </div>
+
+  <div id="setup-password-page" class="page hidden">
+    <form id="setup-password-form" class="auth-form">
+      <h1>Set Account Password</h1>
+      <input type="email" id="setup-email" placeholder="Email" required>
+      <input type="text" id="setup-token" placeholder="Setup token" required>
+      <input type="password" id="setup-new-password" placeholder="New Password" required>
+      <input type="password" id="setup-confirm-password" placeholder="Confirm Password" required>
+      <button type="submit">Complete Setup</button>
+      <p>Already set up? <a href="#" onclick="showLogin()">Back to login</a></p>
     </form>
   </div>
 
   <!-- Main App -->
   <nav class="navbar hidden" id="navbar">
     <div class="nav-container">
-      <h2>🎫 Ticket System</h2>
+      <h2 id="nav-title">Ticket System</h2>
       <div class="nav-links">
-        <button onclick="showDashboard()">Dashboard</button>
-        <button onclick="showTickets()">Tickets</button>
-        <button onclick="showCreateTicket()">+ New Ticket</button>
+        <button id="nav-dashboard-btn" onclick="showDashboard()">Dashboard</button>
+        <button id="nav-tickets-btn" onclick="showTickets()">Complaints</button>
+        <button id="nav-create-btn" onclick="showCreateTicket()">Submit Complaint</button>
         <button onclick="logout()">Logout</button>
       </div>
     </div>
@@ -59,21 +70,72 @@
   <!-- Dashboard -->
   <div id="dashboard-page" class="page hidden">
     <main class="dashboard">
-      <h1>Dashboard</h1>
+      <div class="dashboard-topbar">
+        <h1>Technician Control Panel</h1>
+        <button onclick="exportCSV()" class="btn-primary">Export CSV</button>
+      </div>
       <div class="stats-grid">
         <div class="stat-card">
-          <h3>Total Tickets</h3>
+          <h3>Overall Complaints</h3>
           <p class="stat-number" id="total-tickets">0</p>
         </div>
         <div class="stat-card">
-          <h3>Open Tickets</h3>
+          <h3>Open Complaints</h3>
           <p class="stat-number open" id="open-tickets">0</p>
         </div>
         <div class="stat-card">
-          <h3>Resolved Tickets</h3>
-          <p class="stat-number resolved" id="resolved-tickets">0</p>
+          <h3>Closed Complaints</h3>
+          <p class="stat-number resolved" id="closed-tickets">0</p>
         </div>
       </div>
+      <section class="admin-table-panel">
+        <div class="tickets-header">
+          <h2>Complaint Queue</h2>
+          <div class="filters">
+            <select id="status-filter" onchange="applyFilters()">
+              <option value="">All Statuses</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+            <input type="date" id="start-date" placeholder="Start Date" onchange="applyFilters()">
+            <input type="date" id="end-date" placeholder="End Date" onchange="applyFilters()">
+          </div>
+        </div>
+        <div id="tickets-list" class="tickets-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="admin-page" class="page hidden">
+    <main class="form-container">
+      <h1>User Provisioning</h1>
+      <form id="admin-create-user-form">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" id="admin-user-full-name" required>
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="admin-user-email" required>
+        </div>
+        <div class="form-group">
+          <label>Role</label>
+          <select id="admin-user-role">
+            <option value="technician">Technician</option>
+            <option value="operator">Operator</option>
+          </select>
+        </div>
+        <button type="submit" class="btn-primary">Create User</button>
+      </form>
+      <div class="form-group" style="margin-top: 1.25rem;">
+        <label>Setup Token (share securely with created user)</label>
+        <textarea id="admin-setup-token" rows="4" readonly></textarea>
+      </div>
+      <hr style="margin: 1.5rem 0; border: none; border-top: 1px solid #e2e8f0;">
+      <h2 style="margin-bottom: 1rem;">Manage Users</h2>
+      <div id="admin-users-list"></div>
     </main>
   </div>
 
@@ -81,28 +143,28 @@
   <div id="tickets-page" class="page hidden">
     <main class="tickets-container">
       <div class="tickets-header">
-        <h1>Tickets</h1>
+        <h1>Complaint Queue</h1>
         <div class="filters">
-          <select id="status-filter" onchange="applyFilters()">
+          <select id="status-filter-secondary" onchange="applyFiltersFromTicketsPage()">
             <option value="">All Statuses</option>
             <option value="open">Open</option>
             <option value="in_progress">In Progress</option>
             <option value="resolved">Resolved</option>
             <option value="closed">Closed</option>
           </select>
-          <input type="date" id="start-date" placeholder="Start Date" onchange="applyFilters()">
-          <input type="date" id="end-date" placeholder="End Date" onchange="applyFilters()">
+          <input type="date" id="start-date-secondary" placeholder="Start Date" onchange="applyFiltersFromTicketsPage()">
+          <input type="date" id="end-date-secondary" placeholder="End Date" onchange="applyFiltersFromTicketsPage()">
           <button onclick="exportCSV()" class="btn-primary">📥 Export CSV</button>
         </div>
       </div>
-      <div id="tickets-list" class="tickets-grid"></div>
+      <div id="tickets-list-secondary" class="tickets-grid"></div>
     </main>
   </div>
 
   <!-- Create Ticket -->
   <div id="create-ticket-page" class="page hidden">
     <main class="form-container">
-      <h1>Create New Ticket</h1>
+      <h1 id="create-ticket-title">Submit Complaint</h1>
       <form id="create-ticket-form">
         <div class="form-group">
           <label>Title</label>
