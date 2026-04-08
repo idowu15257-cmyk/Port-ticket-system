@@ -109,6 +109,66 @@ class TicketAPI {
     const response = await fetch(`${API_BASE_URL}/export/csv?${params}`, {
       headers: this.getAuthHeader()
     });
+
+    if (!response.ok) {
+      let errorMessage = `Export failed with status ${response.status}`;
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        try {
+          const payload = await response.json();
+          if (payload?.error) errorMessage = payload.error;
+        } catch (_) {
+          // Keep fallback status message.
+        }
+      } else {
+        try {
+          const payloadText = await response.text();
+          if (payloadText) errorMessage = payloadText;
+        } catch (_) {
+          // Keep fallback status message.
+        }
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    return response.text();
+  }
+
+  static async exportXLSX(status = '', startDate = '', endDate = '') {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+
+    const response = await fetch(`${API_BASE_URL}/export/xlsx?${params}`, {
+      headers: this.getAuthHeader()
+    });
+
+    if (!response.ok) {
+      let errorMessage = `Export failed with status ${response.status}`;
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        try {
+          const payload = await response.json();
+          if (payload?.error) errorMessage = payload.error;
+        } catch (_) {
+          // Keep fallback status message.
+        }
+      } else {
+        try {
+          const payloadText = await response.text();
+          if (payloadText) errorMessage = payloadText;
+        } catch (_) {
+          // Keep fallback status message.
+        }
+      }
+
+      throw new Error(errorMessage);
+    }
+
     return response.blob();
   }
 

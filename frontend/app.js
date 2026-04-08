@@ -553,6 +553,8 @@ async function applyFiltersFromTicketsPage() {
 
 async function exportCSV() {
   try {
+    showStatusBanner('Preparing Excel export...', 'info', 2500);
+
     const isTicketQueuePage = !document.getElementById('tickets-page').classList.contains('hidden');
     const status = isTicketQueuePage
       ? document.getElementById('status-filter-secondary')?.value || ''
@@ -564,14 +566,17 @@ async function exportCSV() {
       ? document.getElementById('end-date-secondary')?.value || ''
       : document.getElementById('end-date')?.value || '';
 
-    const blob = await TicketAPI.exportCSV(status, startDate, endDate);
+    const blob = await TicketAPI.exportXLSX(status, startDate, endDate);
+    const fileName = `complaints-report-${new Date().toISOString().split('T')[0]}.xlsx`;
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `complaints-report-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
+    showStatusBanner('Excel file downloaded successfully.', 'success', 3500);
   } catch (err) {
     handleNetworkError('Export failed', err);
   }

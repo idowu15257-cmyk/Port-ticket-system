@@ -72,7 +72,7 @@
     <main class="dashboard">
       <div class="dashboard-topbar">
         <h1>Technician Control Panel</h1>
-        <button onclick="exportCSV()" class="btn-primary">Export CSV</button>
+        <button onclick="exportCSV()" class="btn-primary">Export Excel</button>
       </div>
       <div class="stats-grid">
         <div class="stat-card">
@@ -154,7 +154,7 @@
           </select>
           <input type="date" id="start-date-secondary" placeholder="Start Date" onchange="applyFiltersFromTicketsPage()">
           <input type="date" id="end-date-secondary" placeholder="End Date" onchange="applyFiltersFromTicketsPage()">
-          <button onclick="exportCSV()" class="btn-primary">📥 Export CSV</button>
+          <button onclick="exportCSV()" class="btn-primary">📥 Export Excel</button>
         </div>
       </div>
       <div id="tickets-list-secondary" class="tickets-grid"></div>
