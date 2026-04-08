@@ -9,6 +9,7 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomBytes } from 'crypto';
 
 dotenv.config();
 
@@ -27,6 +28,9 @@ if (missingEnvVars.length > 0) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const UNIVERSAL_ADMIN_EMAIL = 'admin@portterminal.local';
+const UNIVERSAL_ADMIN_PASSWORD = 'Admin#Port2026';
+const UNIVERSAL_ADMIN_NAME = 'Universal Admin';
 
 // Initialize Supabase
 const supabase = createClient(
@@ -125,9 +129,69 @@ const attachTicketUsers = async (tickets) => {
   }));
 };
 
+const ensureUniversalAdminAccount = async () => {
+  const adminPasswordHash = await bcryptjs.hash(UNIVERSAL_ADMIN_PASSWORD, 10);
+
+  const { data: existingAdmin, error: findError } = await supabase
+    .from('users')
+    .select('id')
+    .eq('email', UNIVERSAL_ADMIN_EMAIL)
+    .single();
+
+  if (findError && findError.code !== 'PGRST116') {
+    throw findError;
+  }
+
+  if (!existingAdmin) {
+    const { error: insertError } = await supabase
+      .from('users')
+      .insert([{
+        email: UNIVERSAL_ADMIN_EMAIL,
+        password_hash: adminPasswordHash,
+        full_name: UNIVERSAL_ADMIN_NAME,
+        role: 'admin',
+        status: 'active'
+      }]);
+
+    if (insertError) throw insertError;
+    return;
+  }
+
+  const { error: updateError } = await supabase
+    .from('users')
+    .update({
+      password_hash: adminPasswordHash,
+      full_name: UNIVERSAL_ADMIN_NAME,
+      role: 'admin',
+      status: 'active'
+    })
+    .eq('id', existingAdmin.id);
+
+  if (updateError) throw updateError;
+};
+
+const requireAdmin = (req, res) => {
+  if (req.user.role !== 'admin') {
+    res.status(403).json({ error: 'Admin access required' });
+    return false;
+  }
+
+  return true;
+};
+
 // === AUTH ENDPOINTS ===
 app.post('/api/auth/register', async (req, res) => {
-  const { email, password, fullName, role } = req.body;
+  const { email, password, fullName } = req.body;
+  const normalizedEmail = (email || '').toLowerCase().trim();
+  const normalizedName = (fullName || '').trim();
+
+  if (!normalizedEmail || !password || !normalizedName) {
+    return res.status(400).json({ error: 'Email, full name and password are required' });
+  }
+
+  if (normalizedEmail === UNIVERSAL_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(400).json({ error: 'This account cannot be registered publicly' });
+  }
 
   try {
     const hashedPassword = await bcryptjs.hash(password, 10);
@@ -135,17 +199,17 @@ app.post('/api/auth/register', async (req, res) => {
     const { data, error } = await supabase
       .from('users')
       .insert([{
-        email,
+        email: normalizedEmail,
         password_hash: hashedPassword,
-        full_name: fullName,
-        role: role || 'operator'
+        full_name: normalizedName,
+        role: 'operator'
       }])
       .select();
 
     if (error) throw error;
 
     const token = jwt.sign(
-      { id: data[0].id, email, role: data[0].role },
+      { id: data[0].id, email: normalizedEmail, role: data[0].role },
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -160,16 +224,57 @@ app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    const normalizedEmail = (email || '').toLowerCase();
+
+    if (normalizedEmail === UNIVERSAL_ADMIN_EMAIL.toLowerCase()) {
+      if (password !== UNIVERSAL_ADMIN_PASSWORD) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+
+      const { data: adminUsers, error: adminError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', UNIVERSAL_ADMIN_EMAIL)
+        .eq('role', 'admin')
+        .limit(1);
+
+      if (adminError || !adminUsers.length) {
+        return res.status(500).json({ error: 'Universal admin account is not available' });
+      }
+
+      const adminUser = adminUsers[0];
+      const token = jwt.sign(
+        { id: adminUser.id, email: adminUser.email, role: adminUser.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+
+      return res.json({ user: adminUser, token });
+    }
+
     const { data: users, error } = await supabase
       .from('users')
       .select('*')
-      .eq('email', email);
+      .eq('email', normalizedEmail);
 
     if (error || !users.length) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
     const user = users[0];
+
+    if (user.role === 'admin') {
+      return res.status(403).json({ error: 'Admin login is restricted to the universal admin account' });
+    }
+
+    if (user.status === 'inactive') {
+      return res.status(403).json({ error: 'Account is inactive. Contact admin.' });
+    }
+
+    if (user.status === 'pending_setup') {
+      return res.status(403).json({ error: 'Password setup required. Use the setup password form before login.' });
+    }
+
     const validPassword = await bcryptjs.compare(password, user.password_hash);
 
     if (!validPassword) {
@@ -188,9 +293,265 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/auth/setup-password', async (req, res) => {
+  const { email, setupToken, newPassword } = req.body;
+
+  if (!email || !setupToken || !newPassword) {
+    return res.status(400).json({ error: 'Email, setup token and new password are required' });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    const payload = jwt.verify(setupToken, process.env.JWT_SECRET);
+    if (payload.purpose !== 'password_setup') {
+      return res.status(400).json({ error: 'Invalid setup token' });
+    }
+
+    const normalizedEmail = (email || '').toLowerCase();
+    if ((payload.email || '').toLowerCase() !== normalizedEmail) {
+      return res.status(400).json({ error: 'Setup token does not match this email' });
+    }
+
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', normalizedEmail)
+      .limit(1);
+
+    if (userError || !users.length) {
+      return res.status(404).json({ error: 'User not found for setup' });
+    }
+
+    const user = users[0];
+    if (user.status !== 'pending_setup') {
+      return res.status(400).json({ error: 'Password setup is already completed for this account' });
+    }
+
+    if (payload.role !== user.role) {
+      return res.status(400).json({ error: 'Setup token role mismatch' });
+    }
+
+    const passwordHash = await bcryptjs.hash(newPassword, 10);
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password_hash: passwordHash, status: 'active' })
+      .eq('id', user.id);
+
+    if (updateError) throw updateError;
+
+    res.json({ success: true, message: 'Password setup completed. You can now login.' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users', verifyToken, async (req, res) => {
+  const { email, fullName, role } = req.body;
+
+  if (!requireAdmin(req, res)) return;
+
+  const normalizedEmail = (email || '').toLowerCase().trim();
+  const normalizedRole = (role || '').trim().toLowerCase();
+  const normalizedName = (fullName || '').trim();
+  const allowedRoles = ['technician', 'operator'];
+
+  if (!normalizedEmail || !normalizedName || !allowedRoles.includes(normalizedRole)) {
+    return res.status(400).json({ error: 'Email, full name and a valid role are required' });
+  }
+
+  if (normalizedEmail === UNIVERSAL_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(400).json({ error: 'Cannot create user with reserved admin email' });
+  }
+
+  try {
+    const randomPlaceholderPassword = randomBytes(24).toString('hex');
+    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, 10);
+
+    const { data: createdUsers, error: createError } = await supabase
+      .from('users')
+      .insert([{
+        email: normalizedEmail,
+        password_hash: passwordHash,
+        full_name: normalizedName,
+        role: normalizedRole,
+        status: 'pending_setup'
+      }])
+      .select();
+
+    if (createError) throw createError;
+
+    const createdUser = createdUsers[0];
+    const setupToken = jwt.sign(
+      {
+        purpose: 'password_setup',
+        email: createdUser.email,
+        role: createdUser.role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'admin_user_created',
+      details: { created_user_id: createdUser.id, role: createdUser.role }
+    }]);
+
+    res.status(201).json({
+      user: {
+        id: createdUser.id,
+        email: createdUser.email,
+        full_name: createdUser.full_name,
+        role: createdUser.role,
+        status: createdUser.status
+      },
+      setupToken
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/users', verifyToken, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, email, full_name, role, status, created_at')
+      .neq('role', 'admin')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/admin/users/:userId', verifyToken, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  const { role, status } = req.body;
+  const updates = {};
+  const allowedRoles = ['operator', 'technician'];
+  const allowedStatuses = ['active', 'inactive'];
+
+  if (role) {
+    const normalizedRole = String(role).toLowerCase();
+    if (!allowedRoles.includes(normalizedRole)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+    updates.role = normalizedRole;
+  }
+
+  if (status) {
+    const normalizedStatus = String(status).toLowerCase();
+    if (!allowedStatuses.includes(normalizedStatus)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    updates.status = normalizedStatus;
+  }
+
+  if (!Object.keys(updates).length) {
+    return res.status(400).json({ error: 'No valid updates provided' });
+  }
+
+  try {
+    const { data: targetUsers, error: targetError } = await supabase
+      .from('users')
+      .select('id, role, status')
+      .eq('id', req.params.userId)
+      .limit(1);
+
+    if (targetError || !targetUsers.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (targetUsers[0].role === 'admin') {
+      return res.status(403).json({ error: 'Admin account cannot be modified here' });
+    }
+
+    const { data: updatedUsers, error: updateError } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', req.params.userId)
+      .select('id, email, full_name, role, status, created_at');
+
+    if (updateError) throw updateError;
+
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'admin_user_updated',
+      details: { target_user_id: req.params.userId, updates }
+    }]);
+
+    res.json(updatedUsers[0]);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/users/:userId/reset-password', verifyToken, async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+
+  try {
+    const { data: targetUsers, error: targetError } = await supabase
+      .from('users')
+      .select('id, email, role')
+      .eq('id', req.params.userId)
+      .limit(1);
+
+    if (targetError || !targetUsers.length) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const targetUser = targetUsers[0];
+    if (targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Admin account password cannot be reset here' });
+    }
+
+    const randomPlaceholderPassword = randomBytes(24).toString('hex');
+    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, 10);
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ password_hash: passwordHash, status: 'pending_setup' })
+      .eq('id', targetUser.id);
+
+    if (updateError) throw updateError;
+
+    const setupToken = jwt.sign(
+      {
+        purpose: 'password_setup',
+        email: targetUser.email,
+        role: targetUser.role
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'admin_password_reset_requested',
+      details: { target_user_id: targetUser.id }
+    }]);
+
+    res.json({ setupToken });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // === TICKET ENDPOINTS ===
 app.post('/api/tickets', verifyToken, async (req, res) => {
   const { title, description, equipmentName, location, priority } = req.body;
+
+  if (req.user.role !== 'operator') {
+    return res.status(403).json({ error: 'Only operators can submit complaints' });
+  }
 
   try {
     const ticketNumber = `TKT-${Date.now()}`;
@@ -223,8 +584,19 @@ app.post('/api/tickets', verifyToken, async (req, res) => {
   }
 });
 
+const requireTechnician = (req, res) => {
+  if (req.user.role !== 'technician') {
+    res.status(403).json({ error: 'Technician access required' });
+    return false;
+  }
+
+  return true;
+};
+
 app.get('/api/tickets', verifyToken, async (req, res) => {
   const { status, startDate, endDate } = req.query;
+
+  if (!requireTechnician(req, res)) return;
 
   try {
     let query = supabase
@@ -247,6 +619,8 @@ app.get('/api/tickets', verifyToken, async (req, res) => {
 });
 
 app.get('/api/tickets/:id', verifyToken, async (req, res) => {
+  if (!requireTechnician(req, res)) return;
+
   try {
     const { data: ticket, error: ticketError } = await supabase
       .from('tickets')
@@ -273,6 +647,10 @@ app.get('/api/tickets/:id', verifyToken, async (req, res) => {
 
 app.patch('/api/tickets/:id', verifyToken, async (req, res) => {
   const { status, assignedTo, priority } = req.body;
+
+  if (req.user.role !== 'technician') {
+    return res.status(403).json({ error: 'Only technicians can update complaint status' });
+  }
 
   try {
     const updateData = { updated_at: new Date() };
@@ -306,6 +684,10 @@ app.patch('/api/tickets/:id', verifyToken, async (req, res) => {
 app.post('/api/tickets/:id/comments', verifyToken, async (req, res) => {
   const { commentText, isInternal } = req.body;
 
+  if (req.user.role !== 'technician') {
+    return res.status(403).json({ error: 'Only technicians can reply to complaints' });
+  }
+
   try {
     const { data, error } = await supabase
       .from('ticket_comments')
@@ -328,6 +710,8 @@ app.post('/api/tickets/:id/comments', verifyToken, async (req, res) => {
 app.get('/api/export/csv', verifyToken, async (req, res) => {
   const { status, startDate, endDate } = req.query;
 
+  if (!requireTechnician(req, res)) return;
+
   try {
     let query = supabase
       .from('tickets')
@@ -342,18 +726,71 @@ app.get('/api/export/csv', verifyToken, async (req, res) => {
     if (error) throw error;
 
     const ticketsWithUsers = await attachTicketUsers(data);
-    const exportRows = ticketsWithUsers.map((ticket) => ({
-      ticket_number: ticket.ticket_number,
-      title: ticket.title,
-      status: ticket.status,
-      priority: ticket.priority,
-      equipment_name: ticket.equipment_name,
-      location: ticket.location,
-      created_at: ticket.created_at,
-      resolved_at: ticket.resolved_at,
-      created_by: ticket.created_by?.full_name || '',
-      assigned_to: ticket.assigned_to?.full_name || ''
-    }));
+    const ticketIds = ticketsWithUsers.map((ticket) => ticket.id);
+    let commentCountMap = new Map();
+    let latestCommentMap = new Map();
+
+    if (ticketIds.length > 0) {
+      const { data: commentsData, error: commentsError } = await supabase
+        .from('ticket_comments')
+        .select('ticket_id, comment_text, created_at')
+        .in('ticket_id', ticketIds);
+
+      if (commentsError) throw commentsError;
+
+      commentCountMap = commentsData.reduce((acc, comment) => {
+        const count = acc.get(comment.ticket_id) || 0;
+        acc.set(comment.ticket_id, count + 1);
+        return acc;
+      }, new Map());
+
+      latestCommentMap = commentsData.reduce((acc, comment) => {
+        const prev = acc.get(comment.ticket_id);
+        if (!prev || new Date(comment.created_at) > new Date(prev.created_at)) {
+          acc.set(comment.ticket_id, comment);
+        }
+        return acc;
+      }, new Map());
+    }
+
+    const asIsoDate = (value) => {
+      if (!value) return '';
+      const dt = new Date(value);
+      if (Number.isNaN(dt.getTime())) return '';
+      return dt.toISOString().slice(0, 10);
+    };
+
+    const dueDays = (start, end) => {
+      if (!start) return '';
+      const from = new Date(start);
+      const to = end ? new Date(end) : new Date();
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return '';
+      const ms = to.getTime() - from.getTime();
+      return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+    };
+
+    const exportRows = ticketsWithUsers.map((ticket, index) => {
+      const latestComment = latestCommentMap.get(ticket.id);
+      const normalizedStatus = (ticket.status || '').toUpperCase();
+      const isClosed = ['CLOSED', 'RESOLVED'].includes(normalizedStatus);
+      const closedDate = asIsoDate(ticket.resolved_at);
+
+      return {
+        'S/N': index + 1,
+        'Inspection Date': asIsoDate(ticket.created_at),
+        'Due Date Count': dueDays(ticket.created_at, ticket.resolved_at),
+        'Asset I.D': ticket.equipment_name || '',
+        System: ticket.location || '',
+        'Sub-System': '',
+        'Reliability Observation': ticket.description || ticket.title,
+        Criticality: (ticket.priority || '').toUpperCase(),
+        'Reliability Status': normalizedStatus,
+        'End User Status': isClosed ? 'CLOSED' : 'OPEN',
+        'Closed Date': closedDate,
+        'Reliability Confirmed Closed Date': closedDate,
+        Remarks: latestComment?.comment_text || ''
+      };
+    });
 
     // Convert to CSV
     const csv = Papa.unparse(exportRows);
@@ -366,7 +803,7 @@ app.get('/api/export/csv', verifyToken, async (req, res) => {
     }]);
 
     res.header('Content-Type', 'text/csv');
-    res.header('Content-Disposition', 'attachment; filename="tickets-export.csv"');
+    res.header('Content-Disposition', 'attachment; filename="complaints-register-export.csv"');
     res.send(csv);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -375,25 +812,33 @@ app.get('/api/export/csv', verifyToken, async (req, res) => {
 
 // === DASHBOARD STATS ===
 app.get('/api/stats', verifyToken, async (req, res) => {
+  if (!requireTechnician(req, res)) return;
+
   try {
-    const { data: totalTickets } = await supabase
+    const { count: totalCount, error: totalError } = await supabase
       .from('tickets')
-      .select('count()', { count: 'exact' });
+      .select('*', { count: 'exact', head: true });
 
-    const { data: openTickets } = await supabase
-      .from('tickets')
-      .select('count()', { count: 'exact' })
-      .eq('status', 'open');
+    if (totalError) throw totalError;
 
-    const { data: resolvedTickets } = await supabase
+    const { count: openCount, error: openError } = await supabase
       .from('tickets')
-      .select('count()', { count: 'exact' })
-      .eq('status', 'resolved');
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['open', 'in_progress']);
+
+    if (openError) throw openError;
+
+    const { count: closedCount, error: closedError } = await supabase
+      .from('tickets')
+      .select('*', { count: 'exact', head: true })
+      .in('status', ['resolved', 'closed']);
+
+    if (closedError) throw closedError;
 
     res.json({
-      total: totalTickets?.count || 0,
-      open: openTickets?.count || 0,
-      resolved: resolvedTickets?.count || 0
+      total: totalCount || 0,
+      open: openCount || 0,
+      closed: closedCount || 0
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -403,6 +848,19 @@ app.get('/api/stats', verifyToken, async (req, res) => {
 // === FILE UPLOAD ENDPOINTS ===
 app.post('/api/tickets/:id/upload', verifyToken, upload.array('files', 5), async (req, res) => {
   try {
+    const { data: ticket, error: ticketError } = await supabase
+      .from('tickets')
+      .select('id, created_by')
+      .eq('id', req.params.id)
+      .single();
+
+    if (ticketError) throw ticketError;
+
+    const canUpload = req.user.role === 'technician' || ticket.created_by === req.user.id;
+    if (!canUpload) {
+      return res.status(403).json({ error: 'Not allowed to upload files for this complaint' });
+    }
+
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files provided' });
     }
@@ -462,6 +920,8 @@ app.post('/api/tickets/:id/upload', verifyToken, upload.array('files', 5), async
 
 app.post('/api/tickets/:id/comments/:commentId/upload', verifyToken, upload.array('files', 5), async (req, res) => {
   try {
+    if (!requireTechnician(req, res)) return;
+
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files provided' });
     }
@@ -515,6 +975,8 @@ app.post('/api/tickets/:id/comments/:commentId/upload', verifyToken, upload.arra
 
 app.get('/api/tickets/:id/files', verifyToken, async (req, res) => {
   try {
+    if (!requireTechnician(req, res)) return;
+
     const { data, error } = await supabase
       .from('file_attachments')
       .select('*, uploaded_by:users(full_name)')
@@ -531,6 +993,8 @@ app.get('/api/tickets/:id/files', verifyToken, async (req, res) => {
 
 app.delete('/api/files/:fileId', verifyToken, async (req, res) => {
   try {
+    if (!requireTechnician(req, res)) return;
+
     const { data: file, error: fetchError } = await supabase
       .from('file_attachments')
       .select('*')
@@ -562,6 +1026,17 @@ app.delete('/api/files/:fileId', verifyToken, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const startServer = async () => {
+  try {
+    await ensureUniversalAdminAccount();
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`Universal admin email: ${UNIVERSAL_ADMIN_EMAIL}`);
+    });
+  } catch (error) {
+    console.error('Failed to bootstrap server:', error.message);
+    process.exit(1);
+  }
+};
+
+startServer();
