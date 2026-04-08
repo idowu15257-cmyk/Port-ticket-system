@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import bcryptjs from 'bcryptjs';
 import Papa from 'papaparse';
+import XLSX from 'xlsx';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -707,11 +708,7 @@ app.post('/api/tickets/:id/comments', verifyToken, async (req, res) => {
 });
 
 // === EXPORT ENDPOINTS ===
-app.get('/api/export/csv', verifyToken, async (req, res) => {
-  const { status, startDate, endDate } = req.query;
-
-  if (!requireTechnician(req, res)) return;
-
+const buildExportRows = async (status, startDate, endDate) => {
   try {
     let query = supabase
       .from('tickets')
@@ -792,10 +789,21 @@ app.get('/api/export/csv', verifyToken, async (req, res) => {
       };
     });
 
-    // Convert to CSV
+    return exportRows;
+  } catch (err) {
+    throw err;
+  }
+};
+
+app.get('/api/export/csv', verifyToken, async (req, res) => {
+  const { status, startDate, endDate } = req.query;
+
+  if (!requireTechnician(req, res)) return;
+
+  try {
+    const exportRows = await buildExportRows(status, startDate, endDate);
     const csv = Papa.unparse(exportRows);
 
-    // Log export action
     await supabase.from('audit_logs').insert([{
       user_id: req.user.id,
       action: 'data_exported',
@@ -805,6 +813,33 @@ app.get('/api/export/csv', verifyToken, async (req, res) => {
     res.header('Content-Type', 'text/csv');
     res.header('Content-Disposition', 'attachment; filename="complaints-register-export.csv"');
     res.send(csv);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/export/xlsx', verifyToken, async (req, res) => {
+  const { status, startDate, endDate } = req.query;
+
+  if (!requireTechnician(req, res)) return;
+
+  try {
+    const exportRows = await buildExportRows(status, startDate, endDate);
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Complaints');
+
+    const xlsxBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'data_exported',
+      details: { format: 'xlsx', filters: { status, startDate, endDate } }
+    }]);
+
+    res.header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.header('Content-Disposition', 'attachment; filename="complaints-register-export.xlsx"');
+    res.send(xlsxBuffer);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
