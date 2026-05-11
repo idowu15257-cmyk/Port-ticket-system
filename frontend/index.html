@@ -26,6 +26,12 @@
         <p>Don't have an account? <a href="#" onclick="showRegister()">Sign up</a></p>
         <p>First-time technician setup? <a href="#" onclick="showSetupPassword()">Set password</a></p>
       </form>
+      <div id="login-auth-loading" class="auth-loading-overlay hidden" aria-hidden="true">
+        <div class="auth-loading-card" role="status" aria-live="polite">
+          <div class="auth-spinner" aria-hidden="true"></div>
+          <p>Signing in...</p>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -40,6 +46,12 @@
       <button type="submit">Sign Up</button>
       <p>Already have an account? <a href="#" onclick="showLogin()">Login</a></p>
     </form>
+    <div id="register-auth-loading" class="auth-loading-overlay hidden" aria-hidden="true">
+      <div class="auth-loading-card" role="status" aria-live="polite">
+        <div class="auth-spinner" aria-hidden="true"></div>
+        <p>Creating account...</p>
+      </div>
+    </div>
   </div>
 
   <div id="setup-password-page" class="page hidden">
@@ -52,6 +64,12 @@
       <button type="submit">Complete Setup</button>
       <p>Already set up? <a href="#" onclick="showLogin()">Back to login</a></p>
     </form>
+    <div id="setup-password-auth-loading" class="auth-loading-overlay hidden" aria-hidden="true">
+      <div class="auth-loading-card" role="status" aria-live="polite">
+        <div class="auth-spinner" aria-hidden="true"></div>
+        <p>Saving password...</p>
+      </div>
+    </div>
   </div>
 
   <!-- Main App -->

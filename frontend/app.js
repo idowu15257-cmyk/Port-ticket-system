@@ -47,6 +47,29 @@ function rememberLoginEmail(email) {
   renderRememberedEmailSuggestions();
 }
 
+function setAuthLoading(pageId, isLoading, message) {
+  const page = document.getElementById(pageId);
+  if (!page) return;
+
+  const overlay = page.querySelector('.auth-loading-overlay');
+  const controls = page.querySelectorAll('input, button, select, textarea');
+
+  page.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+
+  if (overlay) {
+    const textNode = overlay.querySelector('.auth-loading-card p');
+    if (textNode && message) {
+      textNode.textContent = message;
+    }
+    overlay.classList.toggle('hidden', !isLoading);
+    overlay.setAttribute('aria-hidden', isLoading ? 'false' : 'true');
+  }
+
+  controls.forEach((control) => {
+    control.disabled = isLoading;
+  });
+}
+
 function isTechnician() {
   return currentUser?.role === 'technician';
 }
@@ -246,6 +269,8 @@ async function handleLogin(e) {
   const email = document.getElementById('email').value;
   const password = document.getElementById('password').value;
 
+  setAuthLoading('login-page', true, 'Signing in...');
+
   try {
     const result = await TicketAPI.login(email, password);
     if (result.error) {
@@ -263,6 +288,8 @@ async function handleLogin(e) {
     showStatusBanner('Login successful.', 'success', 3500);
   } catch (err) {
     handleNetworkError('Login failed', err);
+  } finally {
+    setAuthLoading('login-page', false, 'Signing in...');
   }
 }
 
@@ -272,6 +299,8 @@ async function handleRegister(e) {
   const password = document.getElementById('reg-password').value;
   const fullName = document.getElementById('full-name').value;
   const role = 'operator';
+
+  setAuthLoading('register-page', true, 'Creating account...');
 
   try {
     const result = await TicketAPI.register(email, password, fullName, role);
@@ -289,6 +318,8 @@ async function handleRegister(e) {
     showStatusBanner('Registration successful.', 'success', 3500);
   } catch (err) {
     handleNetworkError('Registration failed', err);
+  } finally {
+    setAuthLoading('register-page', false, 'Creating account...');
   }
 }
 
@@ -305,6 +336,8 @@ async function handleSetupPassword(e) {
     return;
   }
 
+  setAuthLoading('setup-password-page', true, 'Saving password...');
+
   try {
     const result = await TicketAPI.setupPassword(email, setupToken, newPassword);
     if (result.error) {
@@ -316,6 +349,8 @@ async function handleSetupPassword(e) {
     showLogin();
   } catch (err) {
     handleNetworkError('Password setup failed', err);
+  } finally {
+    setAuthLoading('setup-password-page', false, 'Saving password...');
   }
 }
 
@@ -985,8 +1020,8 @@ function renderTicketDetail(ticket) {
 
   if (ticket.comments && ticket.comments.length > 0) {
     ticket.comments.forEach(comment => {
-      const author = comment.user?.full_name || comment.user_id?.full_name || 'Unknown user';
-      const role = comment.user?.role || comment.user_id?.role || 'user';
+      const author = comment.user?.full_name || comment.user?.email || 'Unknown user';
+      const role = comment.user?.role || 'user';
       commentsList.insertAdjacentHTML('beforeend', renderConversationMessage({
         author,
         role,
