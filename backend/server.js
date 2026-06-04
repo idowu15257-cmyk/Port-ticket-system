@@ -11,13 +11,14 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'JWT_SECRET'];
+const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'JWT_SECRET', 'ADMIN_EMAIL', 'ADMIN_PASSWORD'];
 const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
 if (missingEnvVars.length > 0) {
   console.error(
@@ -29,9 +30,11 @@ if (missingEnvVars.length > 0) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const UNIVERSAL_ADMIN_EMAIL = 'admin@portterminal.local';
-const UNIVERSAL_ADMIN_PASSWORD = 'Admin#Port2026';
-const UNIVERSAL_ADMIN_NAME = 'Universal Admin';
+
+// Admin credentials from environment variables (SECURITY FIX)
+const UNIVERSAL_ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const UNIVERSAL_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const UNIVERSAL_ADMIN_NAME = process.env.ADMIN_NAME || 'System Administrator';
 
 // Initialize Supabase
 const supabase = createClient(
@@ -69,9 +72,26 @@ const upload = multer({
   }
 });
 
+// Rate limiting middleware (SECURITY FIX)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 login attempts per windowMs
+  message: 'Too many login attempts, please try again later.',
+  skipSuccessfulRequests: true,
+});
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use('/api/', apiLimiter); // Apply rate limiting to all API routes
 
 // Authentication middleware
 const verifyToken = (req, res, next) => {
@@ -130,8 +150,11 @@ const attachTicketUsers = async (tickets) => {
   }));
 };
 
+// PERFORMANCE: Reduce bcrypt rounds from 10 to 8 for faster login (still secure)
+const BCRYPT_ROUNDS = 8;
+
 const ensureUniversalAdminAccount = async () => {
-  const adminPasswordHash = await bcryptjs.hash(UNIVERSAL_ADMIN_PASSWORD, 10);
+  const adminPasswordHash = await bcryptjs.hash(UNIVERSAL_ADMIN_PASSWORD, BCRYPT_ROUNDS);
 
   const { data: existingAdmin, error: findError } = await supabase
     .from('users')
@@ -180,8 +203,18 @@ const requireAdmin = (req, res) => {
   return true;
 };
 
+// === HEALTH CHECK ENDPOINT ===
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
 // === AUTH ENDPOINTS ===
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { email, password, fullName } = req.body;
   const normalizedEmail = (email || '').toLowerCase().trim();
   const normalizedName = (fullName || '').trim();
@@ -195,7 +228,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   try {
-    const hashedPassword = await bcryptjs.hash(password, 10);
+    const hashedPassword = await bcryptjs.hash(password, BCRYPT_ROUNDS);
     
     const { data, error } = await supabase
       .from('users')
@@ -221,48 +254,42 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const normalizedEmail = (email || '').toLowerCase();
+    const normalizedEmail = (email || '').toLowerCase().trim();
 
-    if (normalizedEmail === UNIVERSAL_ADMIN_EMAIL.toLowerCase()) {
+    // PERFORMANCE: Single query for both admin and regular users
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, email, password_hash, full_name, role, status')
+      .eq('email', normalizedEmail)
+      .limit(1)
+      .single();
+
+    if (error || !users) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = users;
+
+    // Handle admin login
+    if (user.email === UNIVERSAL_ADMIN_EMAIL && user.role === 'admin') {
       if (password !== UNIVERSAL_ADMIN_PASSWORD) {
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      const { data: adminUsers, error: adminError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', UNIVERSAL_ADMIN_EMAIL)
-        .eq('role', 'admin')
-        .limit(1);
-
-      if (adminError || !adminUsers.length) {
-        return res.status(500).json({ error: 'Universal admin account is not available' });
-      }
-
-      const adminUser = adminUsers[0];
       const token = jwt.sign(
-        { id: adminUser.id, email: adminUser.email, role: adminUser.role },
+        { id: user.id, email: user.email, role: user.role },
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
       );
 
-      return res.json({ user: adminUser, token });
+      return res.json({ user, token });
     }
 
-    const { data: users, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', normalizedEmail);
-
-    if (error || !users.length) {
-      return res.status(401).json({ error: 'Invalid credentials' });
-    }
-
-    const user = users[0];
+    // Handle regular user login
 
     if (user.role === 'admin') {
       return res.status(403).json({ error: 'Admin login is restricted to the universal admin account' });
@@ -335,7 +362,7 @@ app.post('/api/auth/setup-password', async (req, res) => {
       return res.status(400).json({ error: 'Setup token role mismatch' });
     }
 
-    const passwordHash = await bcryptjs.hash(newPassword, 10);
+    const passwordHash = await bcryptjs.hash(newPassword, BCRYPT_ROUNDS);
     const { error: updateError } = await supabase
       .from('users')
       .update({ password_hash: passwordHash, status: 'active' })
@@ -369,7 +396,7 @@ app.post('/api/admin/users', verifyToken, async (req, res) => {
 
   try {
     const randomPlaceholderPassword = randomBytes(24).toString('hex');
-    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, 10);
+    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, BCRYPT_ROUNDS);
 
     const { data: createdUsers, error: createError } = await supabase
       .from('users')
@@ -516,7 +543,7 @@ app.post('/api/admin/users/:userId/reset-password', verifyToken, async (req, res
     }
 
     const randomPlaceholderPassword = randomBytes(24).toString('hex');
-    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, 10);
+    const passwordHash = await bcryptjs.hash(randomPlaceholderPassword, BCRYPT_ROUNDS);
     const { error: updateError } = await supabase
       .from('users')
       .update({ password_hash: passwordHash, status: 'pending_setup' })
@@ -1131,6 +1158,55 @@ app.get('/api/tickets/:id/files', verifyToken, async (req, res) => {
   }
 });
 
+// === FILE DOWNLOAD ENDPOINT (NEW FEATURE) ===
+app.get('/api/files/:fileId/download', verifyToken, async (req, res) => {
+  try {
+    const { data: file, error: fetchError } = await supabase
+      .from('file_attachments')
+      .select('*, ticket_id')
+      .eq('id', req.params.fileId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Check if user has access to the ticket
+    const { data: ticket, error: ticketError } = await supabase
+      .from('tickets')
+      .select('id, created_by, assigned_to')
+      .eq('id', file.ticket_id)
+      .single();
+
+    if (ticketError) throw ticketError;
+
+    if (!canAccessTicket(req, ticket)) {
+      return res.status(403).json({ error: 'Not authorized to download this file' });
+    }
+
+    // Generate signed URL (valid for 1 hour)
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from('ticket-attachments')
+      .createSignedUrl(file.storage_path, 3600);
+
+    if (signedError) throw signedError;
+
+    // Log download action
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'file_downloaded',
+      details: { file_id: req.params.fileId, file_name: file.file_name }
+    }]);
+
+    res.json({
+      download_url: signedData.signedUrl,
+      file_name: file.file_name,
+      file_size: file.file_size,
+      expires_in: 3600
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/files/:fileId', verifyToken, async (req, res) => {
   try {
     if (!requireTechnician(req, res)) return;
@@ -1159,6 +1235,13 @@ app.delete('/api/files/:fileId', verifyToken, async (req, res) => {
       .eq('id', req.params.fileId);
 
     if (dbError) throw dbError;
+
+    // Log deletion action
+    await supabase.from('audit_logs').insert([{
+      user_id: req.user.id,
+      action: 'file_deleted',
+      details: { file_id: req.params.fileId, file_name: file.file_name }
+    }]);
 
     res.json({ success: true });
   } catch (err) {

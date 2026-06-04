@@ -173,12 +173,23 @@ class TicketAPI {
   }
 
   static async uploadFiles(ticketId, files, commentId = null) {
-    const formData = new FormData();
-    for (let i = 0; i < files.length; i++) {
-      formData.append('files', files[i]);
+    // Compress images before upload (COST OPTIMIZATION)
+    let processedFiles = files;
+    if (window.imageCompressor) {
+      try {
+        console.log('Compressing images...');
+        processedFiles = await window.imageCompressor.compressFiles(files);
+      } catch (err) {
+        console.warn('Image compression failed, using originals:', err);
+      }
     }
 
-    const endpoint = commentId 
+    const formData = new FormData();
+    for (let i = 0; i < processedFiles.length; i++) {
+      formData.append('files', processedFiles[i]);
+    }
+
+    const endpoint = commentId
       ? `${API_BASE_URL}/tickets/${ticketId}/comments/${commentId}/upload`
       : `${API_BASE_URL}/tickets/${ticketId}/upload`;
 
@@ -186,6 +197,13 @@ class TicketAPI {
       method: 'POST',
       headers: { Authorization: `Bearer ${currentToken}` },
       body: formData
+    });
+    return response.json();
+  }
+
+  static async downloadFile(fileId) {
+    const response = await fetch(`${API_BASE_URL}/files/${fileId}/download`, {
+      headers: this.getAuthHeader()
     });
     return response.json();
   }
